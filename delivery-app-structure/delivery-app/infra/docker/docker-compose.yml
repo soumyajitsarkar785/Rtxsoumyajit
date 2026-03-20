@@ -1,0 +1,120 @@
+version: '3.9'
+
+services:
+  # ── Databases ──
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      POSTGRES_DB: ${POSTGRES_DB:-delivery_app}
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7-jammy
+    ports: ["27017:27017"]
+    volumes: [mongo_data:/data/db]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes: [redis_data:/data]
+    command: redis-server --appendonly yes
+
+  # ── Message Queue ──
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports: ["2181:2181"]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on: [zookeeper]
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+  # ── Backend Services ──
+  auth-service:
+    build: ../../services/auth-service
+    ports: ["3010:3010"]
+    depends_on: [postgres, redis]
+    environment:
+      PORT: 3010
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+    restart: unless-stopped
+
+  user-service:
+    build: ../../services/user-service
+    ports: ["3011:3011"]
+    depends_on: [postgres]
+    environment:
+      PORT: 3011
+      POSTGRES_HOST: postgres
+
+  order-service:
+    build: ../../services/order-service
+    ports: ["3012:3012"]
+    depends_on: [postgres, kafka]
+    environment:
+      PORT: 3012
+      POSTGRES_HOST: postgres
+      KAFKA_BROKER: kafka:9092
+
+  tracking-service:
+    build: ../../services/tracking-service
+    ports: ["3013:3013"]
+    depends_on: [redis, mongo]
+    environment:
+      PORT: 3013
+      REDIS_URL: redis://redis:6379
+      MONGO_URI: mongodb://mongo:27017/delivery_app
+
+  payment-service:
+    build: ../../services/payment-service
+    ports: ["3014:3014"]
+    depends_on: [postgres]
+    environment:
+      PORT: 3014
+      POSTGRES_HOST: postgres
+
+  notification-service:
+    build: ../../services/notification-service
+    ports: ["3015:3015"]
+    depends_on: [kafka]
+    environment:
+      PORT: 3015
+      KAFKA_BROKER: kafka:9092
+
+  admin-service:
+    build: ../../services/admin-service
+    ports: ["3016:3016"]
+    depends_on: [postgres]
+
+  # ── API Gateway ──
+  api-gateway:
+    image: nginx:alpine
+    ports: ["8080:80"]
+    volumes: [./nginx.conf:/etc/nginx/nginx.conf:ro]
+    depends_on:
+      - auth-service
+      - order-service
+      - tracking-service
+      - payment-service
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:

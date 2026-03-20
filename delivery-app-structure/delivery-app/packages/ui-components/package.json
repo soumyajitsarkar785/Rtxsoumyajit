@@ -1,0 +1,9 @@
+{
+  "name": "@delivery/ui-components",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.73"
+  }
+}
